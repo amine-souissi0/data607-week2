@@ -1,0 +1,143 @@
+---
+title: "DATA 607 — Week 2A: SQL and R (Movie Ratings)"
+author: "Nawel"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(DBI)
+library(RSQLite)
+```
+
+## Overview
+
+This report collects movie ratings for six titles from six people, stores them
+in a small relational SQL database (`users`, `movies`, `ratings`), and loads
+that data into R for analysis. The goal is to practice the full round trip —
+SQL schema design, a many-to-many ratings table, and reading SQL output into a
+tidy R data frame — while handling the reality that not everyone has seen
+every movie. Full SQL source:
+[create_tables.sql](https://raw.githubusercontent.com/amine-souissi0/data607-week2/main/week2a_movie_ratings/create_tables.sql).
+
+> **Note on the data:** the ratings below are placeholder values while the
+> real 5-person survey is being collected. Only `create_tables.sql` needs to
+> change to swap in real responses — this report re-runs unchanged.
+
+## Loading the SQL Script from GitHub
+
+The database is *built at run time* from a `.sql` file hosted on GitHub, so
+the whole pipeline is reproducible from a URL rather than a local file: R
+downloads the raw SQL text, then executes each statement against a fresh,
+in-memory SQLite database.
+
+```{r load-sql}
+sql_url <- "https://raw.githubusercontent.com/amine-souissi0/data607-week2/main/week2a_movie_ratings/create_tables.sql"
+
+sql_lines <- readLines(sql_url, warn = FALSE)
+
+# Drop full-line comments BEFORE splitting into statements. Doing this after
+# splitting would fail: this file opens with a multi-line comment block, so
+# the first "chunk" between semicolons starts with a comment line even
+# though it ends with a real CREATE TABLE statement — checking only whether
+# the whole chunk starts with "--" would wrongly discard it.
+sql_text <- sql_lines |>
+  discard(~ str_starts(str_trim(.x), "--")) |>
+  paste(collapse = "\n")
+
+statements <- str_split(sql_text, ";")[[1]] |>
+  str_trim() |>
+  discard(~ .x == "")
+
+con <- dbConnect(RSQLite::SQLite(), ":memory:")
+walk(statements, ~ dbExecute(con, .x))
+```
+
+## Querying the Database into a Data Frame
+
+A `JOIN` across all three tables turns the normalized SQL tables back into one
+wide, human-readable table — this is the "user-item matrix" the assignment
+mentions.
+
+```{r query}
+ratings_df <- dbGetQuery(con, "
+  SELECT u.name  AS user_name,
+         m.title AS movie_title,
+         r.rating
+  FROM ratings r
+  JOIN users  u ON u.user_id  = r.user_id
+  JOIN movies m ON m.movie_id = r.movie_id
+")
+
+ratings_df <- ratings_df |> as_tibble()
+head(ratings_df, 10)
+```
+
+## Handling Missing Ratings
+
+Not every person has seen every movie, so `rating` can be `NA`. We keep those
+rows (they're informative — "hasn't seen it" is different from "hated it")
+but exclude them from any average.
+
+```{r missing-data}
+ratings_df |>
+  summarize(
+    total_pairs   = n(),
+    missing_count = sum(is.na(rating)),
+    missing_pct   = round(100 * mean(is.na(rating)), 1)
+  )
+```
+
+## Analysis
+
+**Average rating per movie** (missing ratings excluded via `na.rm = TRUE`):
+
+```{r avg-per-movie}
+ratings_df |>
+  group_by(movie_title) |>
+  summarize(
+    avg_rating = round(mean(rating, na.rm = TRUE), 2),
+    n_ratings  = sum(!is.na(rating))
+  ) |>
+  arrange(desc(avg_rating))
+```
+
+**Average rating given per user** — a quick check for whether someone rates
+systematically higher or lower than the group:
+
+```{r avg-per-user}
+ratings_df |>
+  group_by(user_name) |>
+  summarize(
+    avg_given = round(mean(rating, na.rm = TRUE), 2),
+    n_seen    = sum(!is.na(rating))
+  ) |>
+  arrange(desc(avg_given))
+```
+
+```{r cleanup, include=FALSE}
+dbDisconnect(con)
+```
+
+## Conclusions and Findings
+
+With the current placeholder data, ratings cluster in the 3–5 range with no
+extreme outliers, and missing ratings are spread across both users and movies
+rather than concentrated in one of either — a sign the "hasn't seen it" gaps
+are close to random rather than a sign of a bad question or a bad movie
+choice. To extend this work: (1) replace the placeholder `INSERT`s with real
+survey responses, (2) add a `genre` column to `movies` to check whether
+average rating varies by genre, and (3) reshape `ratings_df` into a wide
+user-by-movie matrix (`pivot_wider`) as a first step toward a recommender
+system, since that matrix is exactly what collaborative filtering needs as
+input.
+
+## AI Use
+
+Anthropic. (2026). Claude (model: claude-sonnet-5) [Large language model].
+[https://claude.ai/](https://claude.ai/) — used to design the SQL schema
+(users/movies/ratings junction table), write the R code that loads the SQL
+script from a URL and executes it against an in-memory SQLite database, and
+draft the analysis and this write-up. Reviewed and adapted by the author.
