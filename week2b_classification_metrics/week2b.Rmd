@@ -1,0 +1,146 @@
+---
+title: "DATA 607 — Week 2B: Classification Metrics"
+author: "Nawel"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+```
+
+## Overview
+
+This report evaluates a binary classifier that predicts penguin sex (female
+vs. male) from the Palmer Penguins dataset, and looks at how the choice of
+probability threshold changes what the model's performance metrics say.
+`.pred_female` is the model's predicted probability of "female"; `sex` is the
+true label. Data:
+[penguin_predictions.csv](https://raw.githubusercontent.com/amine-souissi0/data607-week2/main/week2b_classification_metrics/penguin_predictions.csv).
+
+```{r load-data}
+data_url <- "https://raw.githubusercontent.com/amine-souissi0/data607-week2/main/week2b_classification_metrics/penguin_predictions.csv"
+penguins <- read_csv(data_url, show_col_types = FALSE)
+glimpse(penguins)
+```
+
+## Null Error Rate
+
+The null error rate is the error you'd get by ignoring the model entirely and
+always guessing the majority class. It matters because it's the baseline a
+real model has to beat — a model that's 90% accurate sounds good until you
+learn the majority-class guess alone gets 85%.
+
+```{r null-error-rate}
+class_counts <- penguins |> count(sex)
+class_counts
+
+majority_class <- class_counts |> slice_max(n, n = 1) |> pull(sex)
+null_error_rate <- 1 - max(class_counts$n) / sum(class_counts$n)
+
+cat("Majority class:", majority_class, "\n")
+cat("Null error rate:", round(null_error_rate, 4), "\n")
+```
+
+```{r class-distribution-plot}
+ggplot(penguins, aes(x = sex, fill = sex)) +
+  geom_bar() +
+  labs(
+    title = "Distribution of actual class (sex)",
+    x = "Sex", y = "Count"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+With 54 male and 39 female penguins (of 93 total), always guessing "male"
+would be right 58.1% of the time — a null error rate of 41.9%. Any model we
+build must beat 41.9% error to be worth using at all.
+
+## Confusion Matrices at Multiple Thresholds
+
+`.pred_class` in the raw data was already computed at the default 0.5
+threshold. To compare thresholds fairly we recompute the predicted class
+ourselves from `.pred_female`, rather than trusting the pre-computed column,
+so the same logic applies at 0.2 and 0.8 too.
+
+```{r confusion-function}
+# Treat "female" as the positive class, since .pred_female is P(female).
+confusion_at <- function(df, threshold) {
+  df |>
+    mutate(pred = if_else(.pred_female > threshold, "female", "male")) |>
+    summarize(
+      threshold = threshold,
+      TP = sum(pred == "female" & sex == "female"),
+      FP = sum(pred == "female" & sex == "male"),
+      TN = sum(pred == "male"   & sex == "male"),
+      FN = sum(pred == "male"   & sex == "female")
+    )
+}
+
+thresholds <- c(0.2, 0.5, 0.8)
+confusion_table <- map_dfr(thresholds, ~ confusion_at(penguins, .x))
+confusion_table
+```
+
+Read as three separate 2x2 tables, threshold 0.5 looks like:
+
+|              | Actual: female | Actual: male |
+|--------------|----------------|--------------|
+| Pred: female | TP             | FP           |
+| Pred: male   | FN             | TN           |
+
+## Performance Metrics
+
+```{r metrics}
+metrics_table <- confusion_table |>
+  mutate(
+    accuracy  = round((TP + TN) / (TP + FP + TN + FN), 3),
+    precision = round(TP / (TP + FP), 3),
+    recall    = round(TP / (TP + FN), 3),
+    f1        = round(2 * precision * recall / (precision + recall), 3)
+  ) |>
+  select(threshold, TP, FP, TN, FN, accuracy, precision, recall, f1)
+
+metrics_table
+```
+
+All three thresholds beat the 41.9% null error rate by a wide margin
+(accuracy ranges roughly 91%–95%). Raising the threshold from 0.2 to 0.8
+trades a couple of true positives for fewer false positives: precision rises
+while recall drops slightly, which is exactly the tradeoff a threshold
+controls.
+
+## Threshold Use Cases
+
+**A 0.2 threshold is preferable** when missing a true positive is far more
+costly than a false alarm — e.g., a medical screening test flagging a
+disease. You'd rather send a healthy patient for an unnecessary follow-up
+(false positive) than send a sick patient home undiagnosed (false negative),
+so the threshold for "flag as positive" should be low.
+
+**A 0.8 threshold is preferable** when a false positive is the costly
+mistake — e.g., an automated system that permanently bans a user account for
+fraud. Acting on a wrong "positive" call is expensive and hard to undo, so
+the model should only act when it's highly confident.
+
+## Conclusions
+
+The classifier comfortably beats the null baseline at every threshold tested,
+confirming it has real predictive signal rather than just exploiting class
+imbalance. Threshold choice is a business decision, not a modeling one: 0.2
+maximizes recall (catches the most true positives, at the cost of more false
+alarms) and 0.8 maximizes precision (fewer false alarms, at the cost of
+missing a few more true positives). To extend this work: plot a full ROC
+curve across all thresholds rather than just three points, and compute AUC as
+a threshold-independent summary of model quality.
+
+## AI Use
+
+Anthropic. (2026). Claude (model: claude-sonnet-5) [Large language model].
+[https://claude.ai/](https://claude.ai/) — used to write the confusion-matrix
+and metrics computation code, verify the resulting numbers against a
+Python reference implementation, and draft this write-up. Reviewed and
+adapted by the author. `penguin_predictions.csv` itself came from the course
+GitHub repository (not AI-generated).
