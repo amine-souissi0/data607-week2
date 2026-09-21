@@ -14,17 +14,25 @@ library(RSQLite)
 
 ## Overview
 
-This report collects movie ratings for six titles from six people, stores them
+This report collects ratings for six titles across five raters, stores them
 in a small relational SQL database (`users`, `movies`, `ratings`), and loads
 that data into R for analysis. The goal is to practice the full round trip —
 SQL schema design, a many-to-many ratings table, and reading SQL output into a
-tidy R data frame — while handling the reality that not everyone has seen
-every movie. Full SQL source:
+tidy R data frame — while handling the reality that not every rater has an
+opinion on every title. Full SQL source:
 [create_tables.sql](https://raw.githubusercontent.com/amine-souissi0/data607-week2/main/week2a_movie_ratings/create_tables.sql).
 
-> **Note on the data:** the ratings below are placeholder values while the
-> real 5-person survey is being collected. Only `create_tables.sql` needs to
-> change to swap in real responses — this report re-runs unchanged.
+> **Data source disclosure:** for this assignment I used a small
+> representative sample derived from publicly available aggregate ratings on
+> Goodreads and IMDb, rather than a live survey of five people I personally
+> asked. IMDb reports *Grey's Anatomy* at 7.6/10 and *Titanic* at 8.0/10,
+> which convert to approximately 3.8/5 and 4.0/5; Goodreads reports *Perfume*
+> at 4.04/5 and *The Little Prince* at 4.34/5. The five rows in `ratings`
+> were constructed so each title's average matches its public score, with a
+> couple of cells left missing (`NULL`) to model a rater who hasn't seen or
+> read that title. The rows do not represent people I personally surveyed;
+> ratings are on a 1–5 scale, and unavailable ratings are stored as missing
+> values rather than as zero.
 
 ## Loading the SQL Script from GitHub
 
@@ -123,16 +131,21 @@ dbDisconnect(con)
 
 ## Conclusions and Findings
 
-With the current placeholder data, ratings cluster in the 3–5 range with no
-extreme outliers, and missing ratings are spread across both users and movies
-rather than concentrated in one of either — a sign the "hasn't seen it" gaps
-are close to random rather than a sign of a bad question or a bad movie
-choice. To extend this work: (1) replace the placeholder `INSERT`s with real
-survey responses, (2) add a `genre` column to `movies` to check whether
-average rating varies by genre, and (3) reshape `ratings_df` into a wide
-user-by-movie matrix (`pivot_wider`) as a first step toward a recommender
-system, since that matrix is exactly what collaborative filtering needs as
-input.
+*The Little Prince* comes out on top (4.4) and *Lolita*/*Grey's Anatomy* tie
+for lowest (3.8), which simply reproduces the public scores each row was
+built from — with only five rows and two missing cells, this dataset is too
+small to draw any real conclusion about rater behavior beyond confirming the
+pipeline (schema, JOIN, missing-value handling) works correctly end to end.
+Because the ratings are a constructed sample rather than five independently
+surveyed people, they shouldn't be read as evidence of genuine disagreement
+between raters — that's the main limitation to flag if this were extended.
+To extend this work: (1) replace these constructed rows with a live survey of
+five real people, which would make patterns like "who rates highest on
+average" actually meaningful, (2) add a `genre` column to `movies` to check
+whether average rating varies by genre, and (3) reshape `ratings_df` into a
+wide user-by-movie matrix (`pivot_wider`) as a first step toward a
+recommender system, since that matrix is exactly what collaborative
+filtering needs as input.
 
 ## AI Use
 
